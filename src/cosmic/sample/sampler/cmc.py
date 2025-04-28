@@ -36,8 +36,7 @@ __all__ = ["get_cmc_sampler", "CMCSample"]
 
 
 def get_cmc_sampler(
-    cluster_profile, primary_model, ecc_model, porb_model, binfrac_model, met, size, **kwargs
-):
+    cluster_profile, primary_model, ecc_model, porb_model, binfrac_model, met, size, batch_size,  binary_pairing = True, **kwargs):
     """Generates an initial cluster sample according to user specified models
 
     Parameters
@@ -148,9 +147,6 @@ def get_cmc_sampler(
     if rng_seed != 0:
         np.random.seed(rng_seed)
 
-    # get radii, radial and transverse velocities
-    r, vr, vt = initconditions.set_r_vr_vt(cluster_profile, N=size, **kwargs)
-
     # track the mass in singles and the mass in binaries
     mass_singles = 0.0
     mass_binaries = 0.0
@@ -159,17 +155,45 @@ def get_cmc_sampler(
     n_singles = 0
     n_binaries = 0
 
-    mass1, total_mass1 = initconditions.sample_primary(
-        primary_model, size=size, **kwargs)
-    (
-        mass1_binaries,
-        mass_single,
-        binfrac_binaries,
-        binary_index,
-    ) = initconditions.binary_select(mass1, binfrac_model=binfrac_model, **kwargs)
+    if binary_pairing: #Binaries will be sampled from within the IMF, instead of sampling additional stars 
+        
+        if type(binfrac_model) == str:
+            raise ValueError('You provided an invalid value for binfrac_model. When using the binary pairing, binfrac_model must be a float. ')
 
-    mass2_binaries = initconditions.sample_secondary(
-        mass1_binaries, **kwargs)
+        # Arrays to keep everything 
+        mass1, mass_single, mass1_binaries, mass2_binaries, binary_index = (np.array([]) for _ in range(5))
+
+        if batch_size is None:
+            batch_size = size / 10
+            print("Setting batch size to ", batch_size) 
+
+        while len(mass_single) + 2*len(mass1_binaries) < size: # Generate masses in batches
+       
+            # Sample from the IMF
+            masses_batch, total_mass = initconditions.sample_primary(primary_model, size=int(batch_size), **kwargs)
+
+            # Find secondary masses from within the IMF 
+            (mass1_batch, mass_single_batch, mass1_binaries_batch, mass2_binaries_batch, binary_index_batch) = initconditions.binary_pairing(masses_batch, binfrac_model=binfrac_model, **kwargs)
+
+            # Append this batch 
+            binary_index = np.concatenate([binary_index, binary_index_batch + len(mass1)]).astype(int) # Need to account for indices from the previous batch
+            mass1 = np.concatenate([mass1, mass1_batch])
+            mass_single = np.concatenate([mass_single, mass_single_batch])
+            mass1_binaries = np.concatenate([mass1_binaries, mass1_binaries_batch])
+            mass2_binaries = np.concatenate([mass2_binaries, mass2_binaries_batch])
+
+    else:
+        mass1, total_mass1 = initconditions.sample_primary(
+            primary_model, size=size, **kwargs)
+        (
+            mass1_binaries,
+            mass_single,
+            binfrac_binaries,
+            binary_index,
+        ) = initconditions.binary_select(mass1, binfrac_model=binfrac_model, **kwargs)
+
+        mass2_binaries = initconditions.sample_secondary(
+            mass1_binaries, **kwargs)
 
     # track the mass sampled
     mass_singles += np.sum(mass_single)
@@ -192,6 +216,9 @@ def get_cmc_sampler(
     # Obtain radii (technically this is done for the binaries in the independent sampler 
     # if set_radii_with_BSE is true, but that's not a huge amount of overhead)
     zsun = kwargs.pop("zsun", 0.02)
+
+     # get radii, radial and transverse velocities
+    r, vr, vt = initconditions.set_r_vr_vt(cluster_profile, N=len(mass1), **kwargs)
 
     Reff = initconditions.set_reff(mass1, metallicity=met, zsun=zsun)
     Reff1 = Reff[binary_index]
@@ -227,7 +254,8 @@ def get_cmc_sampler(
         sep,
         ecc,
     )
-
+    print("N ", len(mass_single) + 2*len(mass1_binaries))
+    print("N ", mass_single.size + 2*mass1_binaries.size)
     singles_table.metallicity = met
     binaries_table.metallicity = met
     singles_table.virial_radius = kwargs.get("virial_radius",1) 

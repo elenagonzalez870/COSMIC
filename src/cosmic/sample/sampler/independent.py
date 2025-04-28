@@ -601,6 +601,134 @@ class Sample(object):
         secondary_mass = utils.rndm(qmin_vals, 1, q_power_law, size=len(primary_mass)) * primary_mass
         return secondary_mass
 
+    def decide_if_binary(self, m1, fb, fb_high=None, msort=None):
+        """
+        Decide if a star is in a binary system based on its mass and the binary fraction.
+        """
+        if fb_high is not None and msort is not None:
+            if m1 < msort:
+                return np.random.uniform(0, 1) < fb
+            else:
+                return np.random.uniform(0, 1) < fb_high
+        else:
+            return np.random.uniform(0, 1) < fb
+        
+    def binary_pairing(self, masses, binfrac_model, **kwargs): #Elena: add kwargs
+
+        """
+        Function to sample the secondary masses from the original IMF. 
+
+        NOTE: the lower lim is set by either qmin or m2_min which are passed as kwargs
+
+        Parameters #Elena: do the other choices in binfrac_model work?
+        ----------
+        masses : `array`
+            masses sampled from the IMF
+        
+        binfrac_model : : `str or float` 
+            Model for binary fraction; choices include: vanHaaften, offner22, or a fraction where 1.0 is 100% binaries
+
+        Optional kwargs are defined in `get_independent_sampler`
+
+        Returns
+        -------
+        mass1 : array
+            sampled single and primary masses
+
+        single_mass: array
+            sampled single masses
+
+        primary_mass : array
+            sampled primary masses 
+
+        secondary_mass : array
+            sampled secondary masses with array size matching size of primary_mass
+
+        binary_index : array
+            indices indicating binary systems within the mass 1 array
+        """
+
+        qmin = kwargs["qmin"] if "qmin" in kwargs.keys() else 0.0
+        m1_min = kwargs["m1_min"] if "m1_min" in kwargs.keys() else 0.08
+        m2_min = kwargs["m2_min"] if "m2_min" in kwargs.keys() else None
+        if (m2_min is None) & (qmin is None):
+            warnings.warn("It is highly recommended that you specify either qmin or m2_min!")
+        if (m2_min is not None) and (m2_min > m1_min):
+            raise ValueError("The m2_min you specified is above the minimum"
+                             " primary mass of the IMF, either lower m2_min or"
+                             " raise the lower value of your sampled primaries")
+
+        # --- `msort` kwarg can be set to have different qmin above `msort`
+        msort = kwargs["msort"] if "msort" in kwargs.keys() else None
+        qmin_msort = kwargs["qmin_msort"] if "qmin_msort" in kwargs.keys() else None
+        m2_min_msort = kwargs["m2_min_msort"] if "m2_min_msort" in kwargs.keys() else None
+        binfrac_model_msort = kwargs["binfrac_model_msort"] if "binfrac_model_msort" in kwargs.keys() else None
+        if (msort is None) and (binfrac_model_msort is not None):
+            raise ValueError("If binfrac_model_msort is specified, you must also supply a value for msort")
+        if (msort is None) and (qmin_msort is not None):
+            raise ValueError("If qmin_msort is specified, you must also supply a value for msort")
+        if (msort is None) and (m2_min_msort is not None):
+            raise ValueError("If m2_min_msort is specified, you must also supply a value for msort")
+        if (m2_min_msort is not None) and (m2_min_msort > msort):
+            raise ValueError("The m2_min_msort you specified is above the minimum"
+                             " primary mass of the high-mass binaries msort")
+
+        masses = np.sort(masses)
+        primary_mass = []
+        secondary_mass = []
+        single_mass = []
+
+        while len(masses) > 0:
+            ind_m1 = -1
+            m1 = masses[ind_m1]
+           
+            if self.decide_if_binary(m1, binfrac_model, binfrac_model_msort, msort): # Decide whether a star will be in a binary
+
+                if msort is not None: # Find possible pairs based on mass ratios 
+                    if m1 > msort:
+                        ind_pairing = np.argwhere(np.logical_and(masses[:ind_m1] >= m1 * qmin_msort, masses[:ind_m1] <= m1 * 1.)).flatten().tolist()
+                    else:
+                        ind_pairing = np.argwhere(np.logical_and(masses[:ind_m1] >= m1 * qmin, masses[:ind_m1] <= m1 * 1.)).flatten().tolist()
+                else:
+                    ind_pairing = np.argwhere(np.logical_and(masses[:ind_m1] >= m1 * qmin, masses[:ind_m1] <= m1 * 1.)).flatten().tolist()
+                
+                if len(ind_pairing) == 0:
+                    # No possible secondaries, add to singles
+                    single_mass.append(m1)
+                else:
+                    # Get target value of mass ratio
+                    if m1 > msort:
+                        q_target = np.random.uniform(qmin_msort, 1.)
+                    else:
+                        q_target = np.random.uniform(m1_min/m1, 1.) if qmin*m1 < m1_min else np.random.uniform(qmin, 1.)
+                        
+                    # Get possible secondaries         
+                    m2_possible = np.asarray([masses[i] for i in ind_pairing])
+                
+                    # Find closest mass ratio among possible secondaries
+                    q_possible = m2_possible / m1
+                    q_diff = np.abs(q_possible - q_target)
+                    ind_m2_in_possible = np.argmin(q_diff)
+                    ind_m2 = ind_pairing[ind_m2_in_possible]
+                    m2 = masses[ind_m2]
+                    
+                    # Remove m2 from unpaired masses
+                    masses = np.delete(masses, ind_m2)
+                    secondary_mass.append(m2)
+                    primary_mass.append(m1)
+            
+            else:
+                single_mass.append(m1)
+
+            masses = np.delete(masses, ind_m1)
+
+        mass1 = single_mass + primary_mass
+
+        # Binary indeces will always be at the bottom of the mass 1 array
+        binary_index = np.arange(len(single_mass), len(single_mass) + len(primary_mass), dtype=int)
+
+        return  np.array(mass1), np.array(single_mass), np.array(primary_mass) , np.array(secondary_mass), binary_index
+
     def binary_select(self, primary_mass, binfrac_model=0.5, **kwargs):
         """Select which primary masses will have a companion using
         either a binary fraction specified by a float or a
