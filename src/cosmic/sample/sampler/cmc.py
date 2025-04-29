@@ -254,8 +254,6 @@ def get_cmc_sampler(
         sep,
         ecc,
     )
-    print("N ", len(mass_single) + 2*len(mass1_binaries))
-    print("N ", mass_single.size + 2*mass1_binaries.size)
     singles_table.metallicity = met
     binaries_table.metallicity = met
     singles_table.virial_radius = kwargs.get("virial_radius",1) 

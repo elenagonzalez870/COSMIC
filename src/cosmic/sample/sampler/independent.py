@@ -613,14 +613,14 @@ class Sample(object):
         else:
             return np.random.uniform(0, 1) < fb
         
-    def binary_pairing(self, masses, binfrac_model, **kwargs): #Elena: add kwargs
+    def binary_pairing(self, masses, binfrac_model, **kwargs): 
 
         """
         Function to sample the secondary masses from the original IMF. 
 
         NOTE: the lower lim is set by either qmin or m2_min which are passed as kwargs
 
-        Parameters #Elena: do the other choices in binfrac_model work?
+        Parameters
         ----------
         masses : `array`
             masses sampled from the IMF
